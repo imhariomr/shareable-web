@@ -8,7 +8,17 @@ export const SocketProvider = ({ children }: any) => {
   const [socket, setSocket] = useState<any>(null);
 
   useEffect(() => {
-    const connection = io(process.env.NEXT_PUBLIC_SOCKET_URL!)
+    let peerId = localStorage.getItem("peerId");
+    if (!peerId) {
+      peerId = crypto.randomUUID();
+      localStorage.setItem("peerId", peerId);
+    }
+
+    const connection = io(process.env.NEXT_PUBLIC_SOCKET_URL!, {
+      auth: { peerId },         
+      reconnection: true,
+    });
+
     setSocket(connection);
 
     return () => {
@@ -23,6 +33,4 @@ export const SocketProvider = ({ children }: any) => {
   );
 };
 
-export const useSocket = () => {
-  return useContext(SocketContext);
-};
+export const useSocket = () => useContext(SocketContext);

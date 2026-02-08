@@ -13,7 +13,8 @@ import { toast } from "sonner"
 
 export default function SharingPage() {
   const [targetId, setTargetId] = useState<any>('');
-  const [socketId, setSocketId] = useState<any>(null);
+  // const [socketId, setSocketId] = useState<any>(null);
+  const peerId = typeof window !== "undefined" ? localStorage.getItem("peerId"): null;
   const [connecting, setConnecting] = useState<boolean>(false);
   const [isSharing,setIsSharing] = useState<boolean>(false);
   const [isShared,setIsShared] = useState<boolean>(false);
@@ -24,6 +25,7 @@ export default function SharingPage() {
   const socket = useSocket();
   const {setUploadingFiles } = UseUploadingFiles();
   const connectTimeoutRef = useRef<any>(null);
+  const [mounted, setMounted] = useState(false);
 
   
   const buffersRef = useRef<any[]>([]);
@@ -33,21 +35,23 @@ export default function SharingPage() {
   useEffect(() => {
     if (!socket) return;
 
-    setSocketId(socket.id);
-    const handleId = (id: any) => setSocketId(id);
-
-    const handleSignal = ({ from, data }: any) => {
+    const handleSignal = ({ fromPeerId, data }: any) => {
 
       // If peer already exists → we are the sender side
       // Sender previously sent an offer and now receiving the answer
       if (peerRef.current) {
-        peerRef.current.signal(data);  // apply received answer/ICE data to complete the WebRTC handshake
-        socket.emit("connection established", {to: from});  // sending an event to the reciever end to let it know the connect got established.
-        toast.success("Connected SuccessFully 🎉");
+        peerRef.current.signal(data);
+
+        socket.emit("connection-established", {
+          toPeerId: fromPeerId
+        });
+
+        toast.success("Connected Successfully 🎉");
         setConnected(true);
         setConnecting(false);
         return;
       }
+
 
       // Peer not created yet → we are the receiver side
       // Create a new peer to handle the incoming offer
@@ -59,18 +63,26 @@ export default function SharingPage() {
         }
       });
 
+
+
       // Receiver got the OFFER
       // Apply offer → simple-peer internally generates the ANSWER
       peerRef.current.signal(data);
 
       // When answer is generated, "signal" event fires
       peerRef.current.on("signal", (answer: any) => {
-        // Send the generated answer back to the sender through socket
         socket.emit("signal", {
-          to: from,
+          toPeerId: fromPeerId,
           data: answer
         });
+      })
+
+      socket.on("connection-established", ({ fromPeerId }: any) => {
+        setIsConnectionEstablisedAtReciever(true);
+        setTargetId(fromPeerId);
+        setConnected(true);
       });
+
 
       // Handle incoming file/data transfer
       peerRef.current.on("data", handleIncomingData);
@@ -80,8 +92,6 @@ export default function SharingPage() {
         console.log("Receiver connected");
       });
     };
-
-    socket.on("id", handleId);
 
     // Receive signaling data (offer/answer/ICE) from the other peer
     socket.on("signal", handleSignal);
@@ -97,13 +107,14 @@ export default function SharingPage() {
 
 
     return () => {
-      socket.off("id", handleId);
       setConnected(false);
       socket.off("signal", handleSignal);
     };
   }, [socket]);
 
-
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   function CopyToClipboard(mouseLeave: boolean) {
     if (mouseLeave) {
@@ -128,19 +139,11 @@ export default function SharingPage() {
       });
 
       peerRef.current.on('signal', (offer: any) => {
-        socket.emit('signal', { to: targetId, data: offer });
-      });
-
-      connectTimeoutRef.current = setTimeout(() => {
-        if (!connected) {
-          toast.error("Couldn't able to connect, Please verify the code or try again later.");
-          setConnecting(false);
-
-          peerRef.current?.destroy();
-          peerRef.current = null;
-        }
-      }, 8000);
-
+        socket.emit('signal', {
+          toPeerId: targetId,   
+          data: offer
+        });
+      }); 
     } catch {
       setConnecting(false);
     }
@@ -266,9 +269,9 @@ export default function SharingPage() {
               </p>
 
               <div className="text-center py-6 bg-gray-100 dark:bg-slate-800 rounded-xl overflow-hidden">
-                {socketId ? (
+                {peerId ? (
                   <span className="break-all">
-                    <ShowTooltipInContent mainContent={socketId} toolTipContent={isCopiedToClipboard ? 'Copied!' : 'Click to copy'}
+                    <ShowTooltipInContent mainContent={peerId} toolTipContent={isCopiedToClipboard ? 'Copied!' : 'Click to copy'}
                       className={'text-sm sm:text-2xl font-semibold tracking-widest'} useButton={false} setCopyToClipboard={() => CopyToClipboard(false)} onMouseLeave={() => CopyToClipboard(true)} />
                   </span>
                 ) : (
