@@ -130,8 +130,18 @@ export default function SharingPage() {
         initiator: true,
         trickle: false,
         config: {
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+
+            // free pulbic turn sever
+            {
+              urls: "turn:openrelay.metered.ca:80",
+              username: "openrelayproject",
+              credential: "openrelayproject"
+            }
+          ]
         }
+
       });
 
       // simple peer generate a offer due to above code, and sends an event of 'signal' automatically.
