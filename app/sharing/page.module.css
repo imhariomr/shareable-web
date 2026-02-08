@@ -1,0 +1,76 @@
+.container {
+  position: relative;
+  width: 340px;
+  height: 340px;
+}
+
+/* center */
+.center {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 70px;
+  height: 70px;
+  border-radius: 9999px;
+  box-shadow: 0 0 25px rgba(0,0,0,0.25);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* light dotted rings (premium look) */
+.ringOuter,
+.ringInner {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px dashed rgba(150,150,150,0.25);
+}
+
+.ringOuter {
+  inset: 0;
+}
+
+.ringInner {
+  inset: 50px;
+}
+
+/* device base */
+.device {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+/* floating animations (NOT circular) */
+.float1 {
+  top: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  animation: float 4s ease-in-out infinite;
+}
+
+.float2 {
+  bottom: 20%;
+  left: 15%;
+  animation: float 5s ease-in-out infinite;
+}
+
+.float3 {
+  bottom: 15%;
+  right: 15%;
+  animation: float 6s ease-in-out infinite;
+}
+
+/* smooth floating */
+@keyframes float {
+  0%,100% { transform: translateY(0px); }
+  50% { transform: translateY(-12px); }
+}
+
+/* hub glow */
+@keyframes pulse {
+  0% { box-shadow: 0 0 0px rgba(0,0,0,0.2); }
+  50% { box-shadow: 0 0 25px rgba(0,0,0,0.35); }
+  100% { box-shadow: 0 0 0px rgba(0,0,0,0.2); }
+}
