@@ -31,14 +31,22 @@ export function ShowTooltipInContent({mainContent,toolTipContent,className,useBu
   }
 
   const cssClass = `${className} ${disabled ? 'cursor-not-allowed opacity-30' : ''}`;
+  let label = mainContent;
 
-  let label = mainContent
-
-  if(entity==='fileUpload'){
-    label = (typeof progress === "number") && (progress!=0 && progress!=100) ? `${mainContent} ${progress}%` : progress===100 ? `Reshare` : mainContent;
-  }else if(entity==='attachments'){
-    label = (typeof receiveProgress === "number") && (receiveProgress!=0 && receiveProgress!=100) ? `${mainContent} ${receiveProgress}%` : mainContent;
+  if (entity === "fileUpload") {
+    if (progress > 0 && progress < 100) {
+      label = `${mainContent} ${progress}%`;
+    } else if (progress === 100) {
+      label = "Reshare";
+    }
   }
+
+  else if (entity === "attachments") {
+    if (receiveProgress > 0 && receiveProgress < 100) {
+      label = `${mainContent} ${receiveProgress}%`;
+    }
+  }
+
   const content = useButton
     ? <Button variant="outline" onClick={onClick}>{label}</Button>
     : <div className={cssClass} onClick={onClick}>{label}</div>;
