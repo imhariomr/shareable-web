@@ -22,7 +22,9 @@ export default function SharingPage() {
   const peerRef = useRef<any>(null);
   const [isCopiedToClipboard, setIsCopiedToClipboard] = useState(false);
   const socket = useSocket();
-  const { uploadingFiles,setUploadingFiles } = UseUploadingFiles();
+  const {setUploadingFiles } = UseUploadingFiles();
+  const connectTimeoutRef = useRef<any>(null);
+
   
   const buffersRef = useRef<any[]>([]);
   const metaRef = useRef<any>(null);
@@ -113,33 +115,37 @@ export default function SharingPage() {
     }
   }
 
-
-
-  // Sender side: start signaling and create peer
   function signaling() {
     setConnecting(true);
 
     try {
-      // Create peer as initiator (this side generates the offer)
       peerRef.current = new Peer({
         initiator: true,
         trickle: false,
         config: {
-          iceServers: [
-            { urls: "stun:stun.l.google.com:19302" }
-          ]
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
         }
       });
 
-      // simple-peer automatically creates the OFFER
       peerRef.current.on('signal', (offer: any) => {
-        // Send the generated offer to receiver via socket
         socket.emit('signal', { to: targetId, data: offer });
       });
-    }catch{
+
+      connectTimeoutRef.current = setTimeout(() => {
+        if (!connected) {
+          toast.error("Couldn't able to connect, Please Verify the code or try again later.");
+          setConnecting(false);
+
+          peerRef.current?.destroy();
+          peerRef.current = null;
+        }
+      }, 10000);
+
+    } catch {
       setConnecting(false);
     }
   }
+
 
 
   async function sendFiles(files: File[]) {
