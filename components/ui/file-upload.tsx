@@ -3,7 +3,7 @@ import { UseUploadingFiles } from "@/app/context/uploading-file-context";
 import { useState } from "react";
 import { ShowTooltipInContent } from "./tooltip-content";
 
-export default function FileUpload({ onFiles,isShared,isSharing }: any) {
+export default function FileUpload({ onFiles,isShared,isSharing,progress }: any) {
     const [dragging, setDragging] = useState(false);
     const [files, setFiles] = useState<File[]>([]);
 
@@ -77,7 +77,7 @@ export default function FileUpload({ onFiles,isShared,isSharing }: any) {
 
     <ShowTooltipInContent mainContent={isSharing ? "Sharing..." : 'Tap To Share'} toolTipContent={files.length === 0 ? 'Add Files To Share' : ''}
     className={'w-full rounded-xl py-3 text-center font-medium transition bg-slate-900 text-white dark:bg-white dark:text-black'}
-    useButton={false} disabled={files.length === 0 || isSharing} onClick={sendFiles} />
+    useButton={false} disabled={files.length === 0 || isSharing} onClick={sendFiles} progress={progress} entity='fileUpload'/>
   </div>
 );
 

@@ -22,16 +22,20 @@ export default function SharingPage() {
   const peerRef = useRef<any>(null);
   const [isCopiedToClipboard, setIsCopiedToClipboard] = useState(false);
   const socket = useSocket();
-  const {setUploadingFiles } = UseUploadingFiles();
+  const {uploadingFiles,setUploadingFiles } = UseUploadingFiles();
   const connectTimeoutRef = useRef<any>(null);
+  const [progress, setProgress] = useState(0);
+  const [receiveProgress, setReceiveProgress] = useState(0);
   const [mounted, setMounted] = useState(false);
 
-  
   const buffersRef = useRef<any[]>([]);
   const connectedRef = useRef(false);
   const metaRef = useRef<any>(null);
-  const receivedFilesMetaDataRef = useRef<any[]>([]);
+  // const receivedAttachmentsRef = useRef<any[]>([]);
   const receivedAttachmentsRef = useRef<any[]>([]);
+  const totalAllBytesRef = useRef(0);
+  const receivedAllBytesRef = useRef(0);
+
   useEffect(() => {
     if (!socket) return;
 
@@ -161,8 +165,15 @@ export default function SharingPage() {
     const channel = peer._channel;
     const chunkSize = 16 * 1024;
     const MAX_BUFFER = 64 * 1024;
-
     try {
+
+      const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+      let sentBytes = 0;
+      peer.send(JSON.stringify({
+        type: "batch-meta",
+        totalBytes,
+        fileCount: files.length
+      }));
       for (const file of files) {
         const buffer = await file.arrayBuffer();
 
@@ -171,7 +182,6 @@ export default function SharingPage() {
           name: file.name,
           size: file.size
         }));
-
         for (let i = 0; i < buffer.byteLength; i += chunkSize) {
 
           while (channel.bufferedAmount > MAX_BUFFER) {
@@ -180,6 +190,9 @@ export default function SharingPage() {
 
           const chunk = buffer.slice(i, i + chunkSize);
           peer.send(chunk);
+          sentBytes += chunk.byteLength;
+          const percent = Math.floor((sentBytes / totalBytes) * 100);
+          (Number(progress) === 100) ? setProgress(0) : setProgress(percent);
         }
         peer.send(JSON.stringify({ type: "end" }));
       }
@@ -191,43 +204,63 @@ export default function SharingPage() {
       setIsSharing(false);
     }
 
-  // setIsShared(false);
-}
+    // setIsShared(false);
+  }
 
 
   function updateReceiverUploadingFiles() {
-    setUploadingFiles([...receivedFilesMetaDataRef.current]);
+    console.log("1111");
+    setUploadingFiles([...receivedAttachmentsRef.current]);
+    console.log("upload",uploadingFiles);
   }
 
   function handleIncomingData(data: any) {
+
+
     if (data instanceof Uint8Array) {
+
       const text = new TextDecoder().decode(data);
 
       try {
         const msg = JSON.parse(text);
 
+        if (msg.type === "batch-meta") {
+          totalAllBytesRef.current = msg.totalBytes;
+          receivedAllBytesRef.current = 0;
+          setReceiveProgress(0);
+          receivedAttachmentsRef.current = [];
+          return;
+        }
+
+        // META
         if (msg.type === "meta") {
           metaRef.current = msg;
-          receivedFilesMetaDataRef.current.push(msg);
+          buffersRef.current = [];
+          return;
+        }
+
+        // END
+        if (msg.type === "end") {
+          const blob = new Blob(buffersRef.current);
+          receivedAttachmentsRef.current.push({blob,metaData: metaRef.current.name});
           updateReceiverUploadingFiles();
           buffersRef.current = [];
           return;
         }
 
-        if (msg.type === "end") {
-          const blob = new Blob(buffersRef.current);
-          const data = {blob, metaData: metaRef.current.name};
-          receivedAttachmentsRef.current.push(data);
-          return;
-        }
-
       } catch {
+        // BINARY CHUNK
         buffersRef.current.push(data);
+        receivedAllBytesRef.current += data.byteLength;
+        const percent = Math.floor(
+          (receivedAllBytesRef.current / totalAllBytesRef.current) * 100
+        );
+        setReceiveProgress(percent);
         return;
       }
     }
-    buffersRef.current.push(data);
   }
+
 
 
   function download() {
@@ -324,9 +357,12 @@ export default function SharingPage() {
               onFiles={(files: any) => sendFiles(files)}
               isShared={isShared}
               isSharing = {isSharing}
+              progress={progress}
               />
             ) : connected && isConnectionEstablisedAtReciever ? (
-              <Attachements downloadAttachments={()=>{download()}}/>
+              <Attachements
+              downloadAttachments={download}
+              receiveProgress={receiveProgress}/>
             ) : (
               <DeviceOrbit />
             )

@@ -14,12 +14,13 @@ interface props{
  disabled?:any,
  setCopyToClipboard?: () => void,
  onMouseLeave?: () => void;
- onClick?:() => void
+ onClick?:() => void,
+ progress?:any,
+ receiveProgress?:any;
+ entity?:any
 }
 
-
-
-export function ShowTooltipInContent({mainContent,toolTipContent,className,useButton,setCopyToClipboard,onMouseLeave,disabled,onClick}: props) {
+export function ShowTooltipInContent({mainContent,toolTipContent,className,useButton,setCopyToClipboard,onMouseLeave,disabled,onClick,progress,receiveProgress,entity}: props) {
 
   const [isCopied, setIsCopied] = useState(false);
 
@@ -31,9 +32,16 @@ export function ShowTooltipInContent({mainContent,toolTipContent,className,useBu
 
   const cssClass = `${className} ${disabled ? 'cursor-not-allowed opacity-30' : ''}`;
 
+  let label = mainContent
+
+  if(entity==='fileUpload'){
+    label = (typeof progress === "number") && progress!=0 ? `${mainContent} ${progress}%` : mainContent;
+  }else if(entity==='attachments'){
+    label = (typeof receiveProgress === "number") && receiveProgress!=0 ? `${mainContent} ${receiveProgress}%` : mainContent;
+  }
   const content = useButton
-    ? <Button variant="outline" onClick={onClick}>{mainContent}</Button>
-    : <div className={cssClass} onClick={onClick}>{mainContent}</div>;
+    ? <Button variant="outline" onClick={onClick}>{label}</Button>
+    : <div className={cssClass} onClick={onClick}>{label}</div>;
 
   if (!toolTipContent?.trim()) {
     return content;

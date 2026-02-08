@@ -3,8 +3,9 @@ import { UseUploadingFiles } from "@/app/context/uploading-file-context";
 import { useRef, useState } from "react";
 import { ShowTooltipInContent } from "./tooltip-content";
 
-export default function Attachements({downloadAttachments}:any) {
+export default function Attachements({downloadAttachments,receiveProgress}:any) {
     const { uploadingFiles, setUploadingFiles } = UseUploadingFiles();
+    let progess = Number(receiveProgress) ?? 0;
     return (
         <div className={`rounded-2xl border p-8 shadow-md space-y-6 border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900`}>
             <h3 className="text-xl font-semibold">
@@ -27,16 +28,16 @@ export default function Attachements({downloadAttachments}:any) {
                             className="flex items-center gap-2 truncate bg-gray-50 dark:bg-slate-800 px-3 py-2 rounded-md"
                         >
                             <span>📄</span>
-                            <span className="truncate flex-1">{file.name}</span>
+                            <span className="truncate flex-1">{file.metaData}</span>
                         </div>
                     ))}
                 </div>
             )}
 
             <div className="flex justify-end">
-                <ShowTooltipInContent mainContent='Download Files' toolTipContent={uploadingFiles.length === 0 ? 'No Files for download' : 'Click to Download'}
+                <ShowTooltipInContent mainContent={(progess!== 100 && uploadingFiles.length !== 0) ? 'Recieving Files' : 'Download Files'} toolTipContent={(uploadingFiles.length === 0 && progess === 0) ? 'No Files for download' : (progess!== 100 && uploadingFiles.length !== 0 ) ? 'Hang tight! Receiving your files...' : 'Click to Download'}
                 className={'w-full rounded-xl py-3 text-center font-medium transition bg-slate-900 text-white dark:bg-white dark:text-black'}
-                useButton={false} disabled={uploadingFiles.length === 0} onClick={downloadAttachments}/>
+                useButton={false} disabled={uploadingFiles.length === 0 || progess!== 100} onClick={downloadAttachments} receiveProgress={receiveProgress} entity='attachments'/>
             </div>
         </div>
     );
