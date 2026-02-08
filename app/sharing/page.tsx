@@ -144,6 +144,13 @@ export default function SharingPage() {
           data: offer
         });
       }); 
+
+      setTimeout(()=>{
+        if(!connected){
+          toast.error("Device not found. Make sure your friend's device is online and try again.");
+          setConnecting(false);    
+        }
+      },8000)
     } catch {
       setConnecting(false);
     }
