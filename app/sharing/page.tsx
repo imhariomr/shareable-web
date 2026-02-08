@@ -133,11 +133,11 @@ export default function SharingPage() {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
 
-            // free pulbic turn sever
+            // using public turn server here
             {
-              urls: "turn:openrelay.metered.ca:80",
-              username: "openrelayproject",
-              credential: "openrelayproject"
+              urls: process.env.NEXT_PUBLIC_TURN_SERVER || '' ,
+              username: process.env.NEXT_PUBLIC_TURN_USERNAME,
+              credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL
             }
           ]
         }
@@ -157,7 +157,7 @@ export default function SharingPage() {
           toast.error("Oops! It seems that your friend's device is offline. Please try again later.");
           setConnecting(false);    
         }
-      },8000)
+      },15000) // waiting time is of 15 sec cause we are using the public turn server
     } catch {
       setConnecting(false);
     }
