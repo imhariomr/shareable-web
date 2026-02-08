@@ -181,6 +181,7 @@ export default function SharingPage() {
 
   async function sendFiles(files: File[]) {
     setIsSharing(true);
+    setProgress(0);
     const peer = peerRef.current;
     if (!peer?.connected) return;
 
@@ -214,7 +215,7 @@ export default function SharingPage() {
           peer.send(chunk);
           sentBytes += chunk.byteLength;
           const percent = Math.floor((sentBytes / totalBytes) * 100);
-          (Number(progress) === 100) ? setProgress(0) : setProgress(percent);
+          setProgress(percent);
         }
         peer.send(JSON.stringify({ type: "end" }));
       }
@@ -231,9 +232,7 @@ export default function SharingPage() {
 
 
   function updateReceiverUploadingFiles() {
-    console.log("1111");
     setUploadingFiles([...receivedAttachmentsRef.current]);
-    console.log("upload",uploadingFiles);
   }
 
   function handleIncomingData(data: any) {
