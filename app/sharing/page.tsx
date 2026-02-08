@@ -13,7 +13,6 @@ import { toast } from "sonner"
 
 export default function SharingPage() {
   const [targetId, setTargetId] = useState<any>('');
-  // const [socketId, setSocketId] = useState<any>(null);
   const peerId = typeof window !== "undefined" ? localStorage.getItem("peerId"): null;
   const [connecting, setConnecting] = useState<boolean>(false);
   const [isSharing,setIsSharing] = useState<boolean>(false);
@@ -41,10 +40,10 @@ export default function SharingPage() {
       // If peer already exists → we are the sender side
       // Sender previously sent an offer and now receiving the answer
       if (peerRef.current) {
-        peerRef.current.signal(data);
+        peerRef.current.signal(data);  // we are the sender side, got the answer from the reciever side 
 
-        socket.emit("connection-established", {
-          toPeerId: fromPeerId
+        socket.emit("connection-established", {    // calling event for the receiver that handshake done
+          toPeerId: fromPeerId 
         });
 
         toast.success("Connected Successfully 🎉");
@@ -64,8 +63,6 @@ export default function SharingPage() {
         }
       });
 
-
-
       // Receiver got the OFFER
       // Apply offer → simple-peer internally generates the ANSWER
       peerRef.current.signal(data);
@@ -78,12 +75,6 @@ export default function SharingPage() {
         });
       })
 
-      socket.on("connection-established", ({ fromPeerId }: any) => {
-        setIsConnectionEstablisedAtReciever(true);
-        setTargetId(fromPeerId);
-        setConnected(true);
-      });
-
 
       // Handle incoming file/data transfer
       peerRef.current.on("data", handleIncomingData);
@@ -94,15 +85,15 @@ export default function SharingPage() {
       });
     };
 
-    // Receive signaling data (offer/answer/ICE) from the other peer
+    // Receive signaling data (answer/ICE) from the other peer
     socket.on("signal", handleSignal);
   
   
     // Fired when the remote peer confirms the connection.
     // handshake completed and now on the event changing the state at reciever's end 
-    socket.on('connection established', ({ from }: any) => {
+    socket.on("connection-established", ({ fromPeerId }: any) => {
       setIsConnectionEstablisedAtReciever(true);
-      setTargetId(from);
+      setTargetId(fromPeerId);
       setConnected(true);
     });
 
@@ -139,8 +130,9 @@ export default function SharingPage() {
         }
       });
 
+      // simple peer generate a offer due to above code, and sends an event of 'signal' automatically.
       peerRef.current.on('signal', (offer: any) => {
-        socket.emit('signal', {
+        socket.emit('signal', {      //sending the offer to other peer using socket 
           toPeerId: targetId,   
           data: offer
         });
