@@ -29,6 +29,7 @@ export default function SharingPage() {
 
   
   const buffersRef = useRef<any[]>([]);
+  const connectedRef = useRef(false);
   const metaRef = useRef<any>(null);
   const receivedFilesMetaDataRef = useRef<any[]>([]);
   const receivedAttachmentsRef = useRef<any[]>([]);
@@ -146,7 +147,7 @@ export default function SharingPage() {
       }); 
 
       setTimeout(()=>{
-        if(!connected){
+        if(!connectedRef.current){
           toast.error("Oops! It seems that your friend's device is offline. Please try again later.");
           setConnecting(false);    
         }
@@ -156,7 +157,9 @@ export default function SharingPage() {
     }
   }
 
-
+  useEffect(() => {
+    connectedRef.current = connected;
+  }, [connected]);
 
   async function sendFiles(files: File[]) {
     setIsSharing(true);
