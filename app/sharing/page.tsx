@@ -147,7 +147,7 @@ export default function SharingPage() {
 
       setTimeout(()=>{
         if(!connected){
-          toast.error("Device not found. Make sure your friend's device is online and try again.");
+          toast.error("Oops! It seems that your friend's device is offline. Please try again later.");
           setConnecting(false);    
         }
       },8000)
