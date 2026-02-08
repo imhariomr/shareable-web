@@ -27,7 +27,7 @@ export default function SharingPage() {
   const [progress, setProgress] = useState(0);
   const [receiveProgress, setReceiveProgress] = useState(0);
   const [mounted, setMounted] = useState(false);
-
+  const isInitiatorRef = useRef(false);
   const buffersRef = useRef<any[]>([]);
   const connectedRef = useRef(false);
   const metaRef = useRef<any>(null);
@@ -43,7 +43,7 @@ export default function SharingPage() {
 
       // If peer already exists → we are the sender side
       // Sender previously sent an offer and now receiving the answer
-      if (peerRef.current) {
+      if (isInitiatorRef.current && peerRef.current) {
         peerRef.current.signal(data);  // we are the sender side, got the answer from the reciever side 
 
         socket.emit("connection-established", {    // calling event for the receiver that handshake done
@@ -57,36 +57,38 @@ export default function SharingPage() {
       }
 
 
-      // Peer not created yet → we are the receiver side
-      // Create a new peer to handle the incoming offer
-      peerRef.current = new Peer({
-        initiator: false,
-        trickle: false,
-        config: {
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-        }
-      });
-
-      // Receiver got the OFFER
-      // Apply offer → simple-peer internally generates the ANSWER
-      peerRef.current.signal(data);
-
-      // When answer is generated, "signal" event fires
-      peerRef.current.on("signal", (answer: any) => {
-        socket.emit("signal", {
-          toPeerId: fromPeerId,
-          data: answer
+      if(!peerRef.current){
+        // Peer not created yet → we are the receiver side
+        // Create a new peer to handle the incoming offer
+        peerRef.current = new Peer({
+          initiator: false,
+          trickle: false,
+          config: {
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+          }
         });
-      })
+
+        // Receiver got the OFFER
+        // Apply offer → simple-peer internally generates the ANSWER
+        peerRef.current.signal(data);
+
+        // When answer is generated, "signal" event fires
+        peerRef.current.on("signal", (answer: any) => {
+          socket.emit("signal", {
+            toPeerId: fromPeerId,
+            data: answer
+          });
+        })
 
 
-      // Handle incoming file/data transfer
-      peerRef.current.on("data", handleIncomingData);
+        // Handle incoming file/data transfer
+        peerRef.current.on("data", handleIncomingData);
 
-      // Fired when P2P connection successfully established
-      peerRef.current.on("connect", () => {
-        console.log("Receiver connected");
-      });
+        // Fired when P2P connection successfully established
+        peerRef.current.on("connect", () => {
+          console.log("Receiver connected");
+        });
+      }
     };
 
     // Receive signaling data (answer/ICE) from the other peer
@@ -124,7 +126,7 @@ export default function SharingPage() {
 
   function signaling() {
     setConnecting(true);
-
+     isInitiatorRef.current = true; 
     try {
       peerRef.current = new Peer({
         initiator: true,
@@ -141,7 +143,6 @@ export default function SharingPage() {
             }
           ]
         }
-
       });
 
       // simple peer generate a offer due to above code, and sends an event of 'signal' automatically.
@@ -152,8 +153,19 @@ export default function SharingPage() {
         });
       }); 
 
+      peerRef.current.on("close", () => {
+        setConnected(false);
+        setConnecting(false);
+        isInitiatorRef.current = false;
+        peerRef.current = null;
+      });
+
+
       setTimeout(()=>{
         if(!connectedRef.current){
+          peerRef.current?.destroy();
+          peerRef.current = null;
+          isInitiatorRef.current = false;
           toast.error("Oops! It seems that your friend's device is offline. Please try again later.");
           setConnecting(false);    
         }
