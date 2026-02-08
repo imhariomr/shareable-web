@@ -133,13 +133,13 @@ export default function SharingPage() {
 
       connectTimeoutRef.current = setTimeout(() => {
         if (!connected) {
-          toast.error("Couldn't able to connect, Please Verify the code or try again later.");
+          toast.error("Couldn't able to connect, Please verify the code or try again later.");
           setConnecting(false);
 
           peerRef.current?.destroy();
           peerRef.current = null;
         }
-      }, 10000);
+      }, 8000);
 
     } catch {
       setConnecting(false);
