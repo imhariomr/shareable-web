@@ -35,9 +35,9 @@ export function ShowTooltipInContent({mainContent,toolTipContent,className,useBu
   let label = mainContent
 
   if(entity==='fileUpload'){
-    label = (typeof progress === "number") && progress!=0 ? `${mainContent} ${progress}%` : mainContent;
+    label = (typeof progress === "number") && (progress!=0 && progress!=100) ? `${mainContent} ${progress}%` : progress===100 ? `Reshare` : mainContent;
   }else if(entity==='attachments'){
-    label = (typeof receiveProgress === "number") && receiveProgress!=0 ? `${mainContent} ${receiveProgress}%` : mainContent;
+    label = (typeof receiveProgress === "number") && (receiveProgress!=0 && receiveProgress!=100) ? `${mainContent} ${receiveProgress}%` : mainContent;
   }
   const content = useButton
     ? <Button variant="outline" onClick={onClick}>{label}</Button>
