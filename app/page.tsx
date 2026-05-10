@@ -6,6 +6,8 @@ import { ModeToggle } from "@/components/ui/theme"
 import { useRouter } from "next/navigation"
 import Navbar from "@/components/ui/navbar"
 import Footer from "@/components/ui/footer"
+import FAQ from "./FAQ/page"
+import Script from "next/script"
 
 function Hero() {
   const router = useRouter();
@@ -17,14 +19,13 @@ function Hero() {
         <div className="space-y-6">
 
           <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-tight text-slate-900 dark:text-white">
-            Instant file sharing
-            <br />
-            between your devices
+            Secure File Sharing Between Devices Instantly
           </h1>
 
-          <p className="text-gray-600 dark:text-gray-300 text-base sm:text-lg max-w-md">
-            Send files directly. No size limit. No uploads. No waiting. Just fast, secure
-            device-to-device transfer in seconds.
+          <p className="text-gray-600 dark:text-gray-300 text-base sm:text-lg max-w-xl leading-8">
+            Sendvia lets you securely share large files instantly between devices
+            without cloud uploads or size limits. Fast, encrypted, peer-to-peer
+            file transfers directly from your browser.
           </p>
 
           <button
@@ -41,7 +42,7 @@ function Hero() {
               hover:-translate-y-1 active:scale-95
               transition-all duration-200
             `}
-            onClick={()=>router.push('/sharing')}
+            onClick={() => router.push('/sharing')}
           >
             Start Sharing
           </button>
@@ -116,11 +117,76 @@ function Features() {
 
 export default function Page() {
   return (
+    <>
+    <Script
+        id="sendvia-schema"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            name: "Sendvia",
+            applicationCategory: "FileSharingApplication",
+            operatingSystem: "Web",
+            url: "https://sendvia.site",
+            description:
+              "Secure peer-to-peer file sharing platform for transferring large files instantly.",
+          }),
+        }}
+      />
+
     <main className="min-h-screen bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-white transition-colors">
-      <Navbar page='main'/>
+      <Navbar page='main' />
       <Hero />
       <Features />
+      {/* ADD THIS SECTION HERE */}
+      <section className="w-full py-20 bg-white dark:bg-slate-950">
+        <div className="mx-auto max-w-4xl px-6">
+
+          <h2 className="text-3xl font-semibold text-slate-900 dark:text-white">
+            Fast & Secure Large File Sharing
+          </h2>
+
+          <p className="mt-6 text-lg text-gray-600 dark:text-gray-300 leading-8">
+            Sendvia is a modern peer-to-peer file sharing platform that helps
+            users transfer files instantly between devices without storing data
+            on external servers. Share videos, folders, documents, and large files
+            securely with encrypted direct connections.
+          </p>
+
+          <div className="mt-10 grid gap-6 sm:grid-cols-2">
+            <div>
+              <h3 className="font-medium text-xl">
+                No Upload Limits
+              </h3>
+
+              <p className="mt-3 text-gray-600 dark:text-gray-300">
+                Transfer huge files directly between devices without waiting
+                for slow cloud uploads.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-medium text-xl">
+                Private Transfers
+              </h3>
+
+              <p className="mt-3 text-gray-600 dark:text-gray-300">
+                Your files stay between connected devices using secure encrypted
+                browser-based transfers.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section
+        id="faq"
+        className="w-full py-20 bg-gray-50 dark:bg-slate-900"
+      >
+        <FAQ />
+      </section>
       <Footer />
     </main>
+    </>
   )
 }
