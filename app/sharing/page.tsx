@@ -266,7 +266,11 @@ export default function SharingPage() {
     stopHeartbeat()
     clearReceiveState()
     markInterrupted()
-    setConnectionState(opts.manual ? "idle" : "disconnected")
+    // Only show the "connection lost, reconnect" banner if we actually had a live connection.
+    // A failed/timed-out first attempt should just return to the plain connect form —
+    // the toast already explains what happened, and there is nothing to "reconnect" to.
+    setConnectionState(opts.manual ? "idle" : connectedRef.current ? "disconnected" : "idle")
+    connectedRef.current = false
     lastPongRef.current = null
     isInitiatorRef.current = false
     if (connectTimeoutRef.current) { clearTimeout(connectTimeoutRef.current); connectTimeoutRef.current = null }
@@ -274,6 +278,17 @@ export default function SharingPage() {
   }
 
   function attachPeerEvents(peer: any) {
+    const pc: RTCPeerConnection | undefined = peer._pc
+    if (pc) {
+      // addEventListener (not the onX properties) so this never clobbers simple-peer's own
+      // internal handlers, which it needs to actually complete the trickle:false handshake.
+      pc.addEventListener("iceconnectionstatechange", () => console.info("[sendvia] iceConnectionState:", pc.iceConnectionState))
+      pc.addEventListener("icegatheringstatechange", () => console.info("[sendvia] iceGatheringState:", pc.iceGatheringState))
+      pc.addEventListener("icecandidateerror", (e: any) => console.warn("[sendvia] icecandidateerror:", e.errorText || e.errorCode || e))
+      pc.addEventListener("icecandidate", (e) => {
+        if (e.candidate) console.info("[sendvia] local candidate:", e.candidate.type, e.candidate.protocol)
+      })
+    }
     peer.on("data", enqueueIncomingData)
     peer.on("connect", () => {
       if (connectTimeoutRef.current) { clearTimeout(connectTimeoutRef.current); connectTimeoutRef.current = null }
