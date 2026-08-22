@@ -1,7 +1,13 @@
-"use client"
-
+import type { Metadata } from "next"
 import Navbar from "@/components/ui/navbar"
 import Footer from "@/components/ui/footer"
+
+export const metadata: Metadata = {
+  title: "Terms of Service",
+  description:
+    "Read the terms governing your use of Sendvia's peer-to-peer file sharing service.",
+  alternates: { canonical: "https://sendvia.site/terms" },
+}
 
 export default function TermsPage() {
   return (

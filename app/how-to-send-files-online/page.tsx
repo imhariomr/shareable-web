@@ -1,11 +1,44 @@
-"use client"
-
+import type { Metadata } from "next"
+import Script from "next/script"
 import Navbar from "@/components/ui/navbar"
 import Footer from "@/components/ui/footer"
+
+export const metadata: Metadata = {
+  title: "How to Send Files Online",
+  description:
+    "A step-by-step guide to sharing files instantly between devices with Sendvia's secure peer-to-peer transfer.",
+  alternates: { canonical: "https://sendvia.site/how-to-send-files-online" },
+}
+
+const STEPS = [
+  { title: "Start a Sharing Session", text: "Click Start Sharing or navigate to sendvia.site/sharing. This generates a unique connection code for your device." },
+  { title: "Open Sendvia on the Other Device", text: "On the second device, open sendvia.site/sharing too. It gets its own unique code." },
+  { title: "Connect the Devices", text: "On either device, enter the other device's code and click Connect. Make sure both devices have the sharing page open." },
+  { title: "Devices Are Now Connected", text: "Once connected, both devices establish a direct peer-to-peer link and can send files to each other." },
+  { title: "Select or Drag Your Files", text: "Drag and drop files into the share area on either device, then click Share to begin the transfer." },
+  { title: "File Transfer Begins", text: "Sendvia transfers the files directly between the two connected devices, with no cloud upload." },
+  { title: "Download the Received Files", text: "Each received file gets its own download button, so you can save files individually as soon as they arrive." },
+]
 
 export default function HowToSharePage() {
   return (
     <main className="min-h-screen bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-white transition-colors">
+      <Script
+        id="sendvia-howto-schema"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "HowTo",
+            name: "How to Send Files Online with Sendvia",
+            step: STEPS.map((step) => ({
+              "@type": "HowToStep",
+              name: step.title,
+              text: step.text,
+            })),
+          }),
+        }}
+      />
 
       <Navbar page="HowToSharePage" />
 
@@ -29,50 +62,11 @@ export default function HowToSharePage() {
             </p>
           </div>
 
-          <TermBlock title="Step 1 — Start a Sharing Session">
-            Click on the <strong>Start Sharing</strong> button or navigate to{" "}
-            <strong>https://sendvia.site/sharing</strong>. This will generate a
-            unique connection code for your device which allows other devices
-            to connect securely.
-          </TermBlock>
-
-          <TermBlock title="Step 2 — Open SendVia on the Other Device">
-            On the second device, repeat the same process by opening{" "}
-            <strong>https://sendvia.site/sharing</strong>. A unique code will
-            appear on that device as well. Now both devices will have their own
-            connection codes displayed on screen.
-          </TermBlock>
-
-          <TermBlock title="Step 3 — Connect the Devices">
-            From the device that will send the files, enter the connection code
-            shown on the other device and click the <strong>Connect</strong>{" "}
-            button. Make sure the receiving device is online and has the
-            sharing page open.
-          </TermBlock>
-
-          <TermBlock title="Step 4 — Devices Are Now Connected">
-            Once the connection is successful, both devices will establish a
-            direct peer-to-peer link. This secure connection allows files to be
-            transferred instantly without any server storage.
-          </TermBlock>
-
-          <TermBlock title="Step 5 — Select or Drag Your Files">
-            Drag and drop your files into the transfer section or choose files
-            from your device. Then click the <strong>Tap to Share</strong>{" "}
-            button to begin the transfer.
-          </TermBlock>
-
-          <TermBlock title="Step 6 — File Transfer Begins">
-            SendVia will start transferring the files directly between the two
-            connected devices. Because the transfer is peer-to-peer, it is fast
-            and does not require uploading files to the cloud.
-          </TermBlock>
-
-          <TermBlock title="Step 7 — Save the Received Files">
-            After the transfer is completed, the receiving device can download
-            the files by clicking the <strong>Save Received Files</strong>{" "}
-            button. The files will then be saved locally on the device.
-          </TermBlock>
+          {STEPS.map((step, i) => (
+            <TermBlock key={step.title} title={`Step ${i + 1} — ${step.title}`}>
+              {step.text}
+            </TermBlock>
+          ))}
 
         </div>
       </section>

@@ -6,7 +6,7 @@ import { ModeToggle } from "@/components/ui/theme"
 import { useRouter } from "next/navigation"
 import Navbar from "@/components/ui/navbar"
 import Footer from "@/components/ui/footer"
-import FAQ from "./FAQ/page"
+import FAQ from "@/components/ui/faq"
 import Script from "next/script"
 
 function Hero() {
@@ -139,7 +139,6 @@ export default function Page() {
       <Navbar page='main' />
       <Hero />
       <Features />
-      {/* ADD THIS SECTION HERE */}
       <section className="w-full py-20 bg-white dark:bg-slate-950">
         <div className="mx-auto max-w-4xl px-6">
 
@@ -179,12 +178,7 @@ export default function Page() {
           </div>
         </div>
       </section>
-      <section
-        id="faq"
-        className="w-full py-20 bg-gray-50 dark:bg-slate-900"
-      >
-        <FAQ />
-      </section>
+      <FAQ />
       <Footer />
     </main>
     </>

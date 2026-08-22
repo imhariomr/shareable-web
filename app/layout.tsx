@@ -4,7 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SocketProvider } from "./context/socket-context";
-import { UploadingFilesProvider } from "./context/uploading-file-context";
+import { FilesProvider } from "./context/files-context";
 import { Toaster } from "sonner";
 
 const geistSans = Geist({
@@ -72,14 +72,6 @@ export const metadata: Metadata = {
     description:
       "Securely share large files instantly with Sendvia. Fast, encrypted, and simple file transfers.",
     siteName: "Sendvia",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "Sendvia File Sharing Platform",
-      },
-    ],
   },
 
   twitter: {
@@ -87,13 +79,11 @@ export const metadata: Metadata = {
     title: "Sendvia | Fast & Secure File Transfer App",
     description:
       "Secure file sharing platform for sending large files instantly.",
-    images: ["/og-image.png"],
   },
 
   icons: {
     icon: "/favicon.ico",
     shortcut: "/favicon.ico",
-    apple: "/apple-touch-icon.png",
   },
 };
 
@@ -107,7 +97,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <UploadingFilesProvider>
+        <FilesProvider>
           <SocketProvider>
             <ThemeProvider
               attribute="class"
@@ -121,7 +111,7 @@ export default function RootLayout({
               </TooltipProvider>
             </ThemeProvider>
           </SocketProvider>
-        </UploadingFilesProvider>
+        </FilesProvider>
       </body>
     </html>
   );

@@ -1,533 +1,485 @@
 "use client"
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, type RefObject } from "react"
+import Peer from "simple-peer"
+import { toast } from "sonner"
 import Navbar from "@/components/ui/navbar"
 import Footer from "@/components/ui/footer"
 import DeviceOrbit from "@/components/ui/orbit"
-import Peer from "simple-peer";
-import { ShowTooltipInContent } from "@/components/ui/tooltip-content"
+import ShareDropzone from "@/components/ui/share-dropzone"
+import FileList from "@/components/ui/file-list"
+import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useSocket } from "../context/socket-context"
-import FileUpload from "@/components/ui/file-upload"
-import Attachements from "@/components/ui/attachments"
-import { UseUploadingFiles } from "../context/uploading-file-context"
-import { toast } from "sonner"
+import { useFiles } from "../context/files-context"
+import { generateId, sanitizeFileName } from "@/lib/file-utils"
+import {
+  CHUNK_SIZE,
+  MAX_BUFFER_BYTES,
+  RESUME_BUFFER_BYTES,
+  CONNECT_TIMEOUT_MS,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_TIMEOUT_MS,
+  adler32,
+  type ControlMessage,
+} from "@/lib/transfer-protocol"
 
-const CHUNK_SIZE = 256 * 1024;
-const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
-const RESUME_BUFFER_BYTES = 1 * 1024 * 1024;
-const CONNECT_TIMEOUT_MS = 20_000;
+type ConnectionState = "idle" | "connecting" | "reconnecting" | "connected" | "disconnected"
 
-interface FileMeta {
-  type: "meta";
-  name: string;
-  size: number;
-  mimeType: string;
-  index: number;
-}
-interface BatchMeta {
-  type: "batch-meta";
-  totalBytes: number;
-  fileCount: number;
-}
-interface EndMsg {
-  type: "end";
-  index: number;
-  checksum: number;
-}
-interface ReceivedFile {
-  name: string;
-  mimeType: string;
-  size: number;
-  url?: string;
+interface ReceiveState {
+  id: string
+  name: string
+  size: number
+  mimeType: string
+  createdAt: number
+  writableStream: FileSystemWritableFileStream | null
+  blobParts: Uint8Array[]
+  receivedBytes: number
+  checksum: number
+  lastReportedPct: number
 }
 
-function adler32(buf: Uint8Array, prev = 1): number {
-  let a = prev & 0xffff, b = (prev >>> 16) & 0xffff;
-  for (let i = 0; i < buf.length; i++) {
-    a = (a + buf[i]) % 65521;
-    b = (b + a) % 65521;
+const CONNECTION_BADGE: Record<ConnectionState, { label: string; pillClass: string; dotClass: string }> = {
+  idle: { label: "Not connected", pillClass: "bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400", dotClass: "bg-gray-400" },
+  connecting: { label: "Connecting…", pillClass: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300", dotClass: "bg-amber-500 animate-pulse" },
+  reconnecting: { label: "Reconnecting…", pillClass: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300", dotClass: "bg-amber-500 animate-pulse" },
+  connected: { label: "Connected", pillClass: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300", dotClass: "bg-emerald-500" },
+  disconnected: { label: "Connection lost", pillClass: "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300", dotClass: "bg-red-500" },
+}
+
+function ConnectionBadge({ state }: { state: ConnectionState }) {
+  const { label, pillClass, dotClass } = CONNECTION_BADGE[state]
+  return (
+    <span role="status" className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${pillClass}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} aria-hidden="true" />
+      {label}
+    </span>
+  )
+}
+
+async function openOPFSWriter(id: string): Promise<FileSystemWritableFileStream | null> {
+  try {
+    if (!("storage" in navigator)) return null
+    const root = await (navigator.storage as any).getDirectory()
+    const fh = await root.getFileHandle(id, { create: true })
+    return await fh.createWritable()
+  } catch {
+    return null
   }
-  return (b << 16) | a;
+}
+
+async function finalizeOPFSBlob(id: string, mimeType: string): Promise<Blob | null> {
+  try {
+    const root = await (navigator.storage as any).getDirectory()
+    const fh = await root.getFileHandle(id)
+    const file = await fh.getFile()
+    const blob = new Blob([file], { type: mimeType })
+    void root.removeEntry(id).catch(() => {})
+    return blob
+  } catch {
+    return null
+  }
+}
+
+async function requestWakeLock(wakeLockRef: RefObject<any>) {
+  try {
+    if (typeof document === "undefined" || document.visibilityState !== "visible") return
+    if (!("wakeLock" in navigator) || wakeLockRef.current) return
+    wakeLockRef.current = await (navigator as any).wakeLock.request("screen")
+    wakeLockRef.current?.addEventListener?.("release", () => { wakeLockRef.current = null })
+  } catch {
+    wakeLockRef.current = null
+  }
+}
+
+async function releaseWakeLock(wakeLockRef: RefObject<any>) {
+  try {
+    await wakeLockRef.current?.release?.()
+  } catch {
+  } finally {
+    wakeLockRef.current = null
+  }
 }
 
 export default function SharingPage() {
-  const [targetId, setTargetId] = useState<string>("");
-  const peerId = typeof window !== "undefined" ? localStorage.getItem("peerId") : null;
+  const [targetId, setTargetId] = useState<string>("")
 
-  const [connecting, setConnecting] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [isSharing, setIsSharing] = useState(false);
-  const [isShared, setIsShared] = useState(false);
-  const [isConnectionEstablishedAtReceiver, setIsConnectionEstablishedAtReceiver] = useState(false);
-  const [isCopiedToClipboard, setIsCopiedToClipboard] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [receiveProgress, setReceiveProgress] = useState(0);
-  // NEW: tracks whether we're in the finalization phase (writing/closing OPFS, creating blob URL)
-  const [isReceiveFinalizing, setIsReceiveFinalizing] = useState(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("idle")
+  const [isCopied, setIsCopied] = useState(false)
 
-  const socket = useSocket();
-  const { setUploadingFiles } = UseUploadingFiles();
+  const { socket, peerId } = useSocket()
+  const { files, upsertFile, markInterrupted, persistIncomingBlob, downloadFile, deleteIncomingFile, clearAllIncoming } = useFiles()
 
-  const peerRef = useRef<any>(null);
-  const lastPongRef = useRef<any>(null);
-  const isInitiatorRef = useRef(false);
-  const manualDisconnectRef = useRef(false);
-  const connectedRef = useRef(false);
-  const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const wakeLockRef = useRef<any>(null);
-  const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sendAbortRef = useRef(false);
-  const receiveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const peerRef = useRef<any>(null)
+  const lastPongRef = useRef<number | null>(null)
+  const isInitiatorRef = useRef(false)
+  const manualDisconnectRef = useRef(false)
+  const connectedRef = useRef(false)
+  const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const wakeLockRef = useRef<any>(null)
+  const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sendQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const cancelledRef = useRef<Set<string>>(new Set())
+  const receiveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const currentReceiveRef = useRef<ReceiveState | null>(null)
 
-  const receivedFilesRef = useRef<ReceivedFile[]>([]);
-  const currentReceiveRef = useRef<{
-    meta: FileMeta;
-    writableStream: FileSystemWritableFileStream | null;
-    blobParts: Uint8Array[];
-    receivedBytes: number;
-    checksum: number;
-  } | null>(null);
-  const totalAllBytesRef = useRef(0);
-  const receivedAllBytesRef = useRef(0);
-  // NEW: tracks total files expected so we know when all are finalized
-  const expectedFileCountRef = useRef(0);
-
-  async function openOPFSWriter(fileName: string): Promise<FileSystemWritableFileStream | null> {
-    try {
-      if (!("storage" in navigator)) return null;
-      const root = await (navigator.storage as any).getDirectory();
-      const fh = await root.getFileHandle(fileName, { create: true });
-      return await fh.createWritable();
-    } catch {
-      return null;
-    }
-  }
-
-  async function finalizeOPFS(fileName: string): Promise<string | null> {
-    try {
-      const root = await (navigator.storage as any).getDirectory();
-      const fh = await root.getFileHandle(fileName);
-      const file = await fh.getFile();
-      return URL.createObjectURL(file);
-    } catch {
-      return null;
-    }
-  }
-
-  async function requestWakeLock() {
-    try {
-      if (typeof document === "undefined" || document.visibilityState !== "visible") return;
-      if (!("wakeLock" in navigator)) return;
-      wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
-      wakeLockRef.current?.addEventListener?.("release", () => {
-        wakeLockRef.current = null;
-      });
-    } catch {
-      wakeLockRef.current = null;
-    }
-  }
-
-  async function releaseWakeLock() {
-    try {
-      await wakeLockRef.current?.release?.();
-    } catch {
-    } finally {
-      wakeLockRef.current = null;
-    }
-  }
+  const isTransferring = files.some((f) => f.status === "transferring")
+  const hasClearableIncoming = files.some((f) => f.direction === "incoming" && f.status === "completed")
 
   function startHeartbeat() {
-    if (pingIntervalRef.current) return;
+    if (pingIntervalRef.current) return
     pingIntervalRef.current = setInterval(() => {
       if (peerRef.current?.connected) {
-        try {
-          peerRef.current.send(JSON.stringify({ type: "ping" }));
-        } catch {
-        }
+        try { peerRef.current.send(JSON.stringify({ type: "ping" } satisfies ControlMessage)) } catch { }
       }
-    }, 5000);
+    }, HEARTBEAT_INTERVAL_MS)
   }
 
   function stopHeartbeat() {
-    if (!pingIntervalRef.current) return;
-    clearInterval(pingIntervalRef.current);
-    pingIntervalRef.current = null;
+    if (!pingIntervalRef.current) return
+    clearInterval(pingIntervalRef.current)
+    pingIntervalRef.current = null
   }
 
   const handleIncomingData = useCallback(async (rawData: unknown) => {
-    let raw: Uint8Array | null = null;
-    let controlMsg: BatchMeta | FileMeta | EndMsg | null | any = null;
+    let raw: Uint8Array | null = null
+    let msg: ControlMessage | null = null
 
     if (typeof rawData === "string") {
-      try { controlMsg = JSON.parse(rawData); } catch { }
-    } else if (rawData instanceof Uint8Array) {
-      raw = rawData;
-      if (raw[0] === 0x7b) {
-        try { controlMsg = JSON.parse(new TextDecoder().decode(raw)); } catch { }
-      }
-    } else if (rawData instanceof ArrayBuffer) {
-      raw = new Uint8Array(rawData);
-      if (raw[0] === 0x7b) {
-        try { controlMsg = JSON.parse(new TextDecoder().decode(raw)); } catch { }
-      }
-    }
-
-    if (controlMsg?.type === "ping") {
-      peerRef.current?.send(JSON.stringify({ type: "pong" }));
-      return;
-    }
-
-    if (controlMsg?.type === "pong") {
-      lastPongRef.current = Date.now();
-      return;
-    }
-
-    if (controlMsg?.type === "batch-meta") {
-      totalAllBytesRef.current = controlMsg.totalBytes;
-      receivedAllBytesRef.current = 0;
-      receivedFilesRef.current = [];
-      // Store expected file count so we know when all are done
-      expectedFileCountRef.current = controlMsg.fileCount;
-      setReceiveProgress(0);
-      setIsReceiveFinalizing(false);
-      void requestWakeLock();
-      return;
-    }
-
-    if (controlMsg?.type === "meta") {
-      const writer = await openOPFSWriter(controlMsg.name);
-      const receiveState = { meta: controlMsg, writableStream: writer, blobParts: [] as Uint8Array[], receivedBytes: 0, checksum: 1 };
-      currentReceiveRef.current = receiveState;
-      return;
-    }
-
-    if (controlMsg?.type === "end" && currentReceiveRef.current) {
-      const cur = currentReceiveRef.current;
-      if (controlMsg.index !== cur.meta.index || controlMsg.checksum !== cur.checksum) {
-        toast.error(`Corrupted transfer detected for ${cur.meta.name}. Please re-send.`);
-        currentReceiveRef.current = null;
-        return;
-      }
-
-      // ✅ Mark as finalizing — this is the async gap where the file isn't ready yet
-      setIsReceiveFinalizing(true);
-
-      let url: string | undefined;
-      if (cur.writableStream) {
-        try { await cur.writableStream.close(); url = (await finalizeOPFS(cur.meta.name)) ?? undefined; } catch { }
-      }
-      if (!url) {
-        const blob = new Blob(cur.blobParts as BlobPart[], { type: cur.meta.mimeType });
-        url = URL.createObjectURL(blob);
-      }
-
-      const finishedFile: ReceivedFile = { name: cur.meta.name, mimeType: cur.meta.mimeType, size: cur.meta.size, url };
-      receivedFilesRef.current.push(finishedFile);
-      currentReceiveRef.current = null;
-
-      const allDone = receivedFilesRef.current.length >= expectedFileCountRef.current;
-
-      // ✅ Only update the UI (and enable download) once ALL files in the batch are finalized
-      if (allDone) {
-        setUploadingFiles([...receivedFilesRef.current]);
-        setIsReceiveFinalizing(false);
-        // ✅ Snap progress to exactly 100% only after files are truly ready
-        setReceiveProgress(100);
-        void releaseWakeLock();
-        toast.success("Files received and ready to download! 🎉");
-      }
-
-      return;
-    }
-
-    if (!raw) return;
-
-    const cur = currentReceiveRef.current;
-    if (!cur) return;
-    cur.checksum = adler32(raw, cur.checksum);
-    if (cur.writableStream) {
-      try { await cur.writableStream.write(raw as unknown as BufferSource); }
-      catch { cur.writableStream = null; cur.blobParts.push(raw); }
+      try { msg = JSON.parse(rawData) } catch { }
     } else {
-      cur.blobParts.push(raw);
+      const bytes = rawData instanceof Uint8Array ? rawData : rawData instanceof ArrayBuffer ? new Uint8Array(rawData) : null
+      if (bytes) {
+        raw = bytes
+        if (bytes[0] === 0x7b) {
+          try { msg = JSON.parse(new TextDecoder().decode(bytes)) } catch { }
+        }
+      }
     }
-    cur.receivedBytes += raw.byteLength;
-    receivedAllBytesRef.current += raw.byteLength;
-    if (totalAllBytesRef.current > 0) {
-      // Cap at 99% while finalizing — the last 1% completes after OPFS/blob URL is ready
-      const rawPct = Math.floor((receivedAllBytesRef.current / totalAllBytesRef.current) * 100);
-      setReceiveProgress(Math.min(rawPct, 99));
+
+    if (msg?.type === "ping") { peerRef.current?.send(JSON.stringify({ type: "pong" } satisfies ControlMessage)); return }
+    if (msg?.type === "pong") { lastPongRef.current = Date.now(); return }
+
+    if (msg?.type === "file-meta") {
+      const id = String(msg.id)
+      const name = sanitizeFileName(msg.name)
+      const size = Number.isFinite(msg.size) && msg.size >= 0 ? msg.size : 0
+      const mimeType = typeof msg.mimeType === "string" && msg.mimeType ? msg.mimeType : "application/octet-stream"
+      const createdAt = Number.isFinite(msg.createdAt) ? msg.createdAt : Date.now()
+      const writer = await openOPFSWriter(id)
+      currentReceiveRef.current = { id, name, size, mimeType, createdAt, writableStream: writer, blobParts: [], receivedBytes: 0, checksum: 1, lastReportedPct: -1 }
+      upsertFile({ id, name, size, mimeType, createdAt, direction: "incoming", status: "transferring", progress: 0 })
+      void requestWakeLock(wakeLockRef)
+      return
     }
-  }, [setUploadingFiles]);
+
+    if (msg?.type === "file-cancel") {
+      const id = String(msg.id)
+      if (currentReceiveRef.current?.id === id) {
+        if (currentReceiveRef.current.writableStream) void currentReceiveRef.current.writableStream.abort().catch(() => { })
+        currentReceiveRef.current = null
+      }
+      upsertFile({ id, status: "cancelled" })
+      return
+    }
+
+    if (msg?.type === "file-end") {
+      const cur = currentReceiveRef.current
+      if (!cur || cur.id !== String(msg.id)) return
+
+      if (msg.checksum !== cur.checksum) {
+        toast.error(`"${cur.name}" arrived corrupted. Ask the sender to share it again.`)
+        upsertFile({ id: cur.id, status: "failed", error: "Checksum mismatch" })
+        if (cur.writableStream) void cur.writableStream.abort().catch(() => { })
+        currentReceiveRef.current = null
+        return
+      }
+
+      let blob: Blob | null = null
+      if (cur.writableStream) {
+        try {
+          await cur.writableStream.close()
+          blob = await finalizeOPFSBlob(cur.id, cur.mimeType)
+        } catch {
+          blob = null
+        }
+      }
+      if (!blob) blob = new Blob(cur.blobParts as BlobPart[], { type: cur.mimeType })
+
+      currentReceiveRef.current = null
+      upsertFile({ id: cur.id, status: "completed", progress: 100 })
+      await persistIncomingBlob({ id: cur.id, name: cur.name, size: cur.size, mimeType: cur.mimeType, createdAt: cur.createdAt }, blob)
+      void releaseWakeLock(wakeLockRef)
+      toast.success(`"${cur.name}" received.`)
+      return
+    }
+
+    if (!raw) return
+    const cur = currentReceiveRef.current
+    if (!cur) return
+    cur.checksum = adler32(raw, cur.checksum)
+    if (cur.writableStream) {
+      try { await cur.writableStream.write(raw as unknown as BufferSource) }
+      catch { cur.writableStream = null; cur.blobParts.push(raw) }
+    } else {
+      cur.blobParts.push(raw)
+    }
+    cur.receivedBytes += raw.byteLength
+    const pct = cur.size > 0 ? Math.min(Math.floor((cur.receivedBytes / cur.size) * 100), 99) : 0
+    if (pct !== cur.lastReportedPct) {
+      cur.lastReportedPct = pct
+      upsertFile({ id: cur.id, progress: pct })
+    }
+  }, [upsertFile, persistIncomingBlob])
 
   const enqueueIncomingData = useCallback((rawData: unknown) => {
     receiveQueueRef.current = receiveQueueRef.current
       .then(() => handleIncomingData(rawData))
-      .catch((err: any) => {
-        console.error(err);
-        toast.error("Failed to process incoming data.");
-      });
-  }, [handleIncomingData]);
+      .catch((err) => {
+        console.error(err)
+        toast.error("Failed to process incoming data.")
+      })
+  }, [handleIncomingData])
 
-  function iceConfig() {
-    return {
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        { urls: process.env.NEXT_PUBLIC_TURN_SERVER || "", username: process.env.NEXT_PUBLIC_TURN_USERNAME, credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL },
-      ],
-      channelConfig: {
-        ordered: false,
-        maxRetransmits: 0
-      }
-    };
+  function iceConfig(): RTCConfiguration {
+    const iceServers: RTCIceServer[] = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+    ]
+    if (process.env.NEXT_PUBLIC_TURN_SERVER) {
+      iceServers.push({
+        urls: process.env.NEXT_PUBLIC_TURN_SERVER,
+        username: process.env.NEXT_PUBLIC_TURN_USERNAME,
+        credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL,
+      })
+    }
+    return { iceServers }
   }
 
   function clearReceiveState() {
-    receivedFilesRef.current = [];
-    const current = currentReceiveRef.current;
-    currentReceiveRef.current = null;
-    totalAllBytesRef.current = 0;
-    receivedAllBytesRef.current = 0;
-    expectedFileCountRef.current = 0;
-    setReceiveProgress(0);
-    setIsReceiveFinalizing(false);
-    setUploadingFiles([]);
-    if (current?.writableStream) {
-      void current.writableStream.abort().catch(() => { });
-    }
-    void releaseWakeLock();
+    const cur = currentReceiveRef.current
+    currentReceiveRef.current = null
+    if (cur?.writableStream) void cur.writableStream.abort().catch(() => { })
+    void releaseWakeLock(wakeLockRef)
   }
 
-  function resetPeer() {
-    stopHeartbeat();
-    setConnected(false);
-    setConnecting(false);
-    setIsConnectionEstablishedAtReceiver(false);
-    clearReceiveState();
-    setIsSharing(false);
-    setIsShared(false);
-    setProgress(0);
-    lastPongRef.current = false;
-    isInitiatorRef.current = false;
-    if (connectTimeoutRef.current) {
-      clearTimeout(connectTimeoutRef.current);
-      connectTimeoutRef.current = null;
-    }
-    if (peerRef.current) { try { peerRef.current.destroy(); } catch { } peerRef.current = null; }
+  function resetPeer(opts: { manual: boolean }) {
+    stopHeartbeat()
+    clearReceiveState()
+    markInterrupted()
+    setConnectionState(opts.manual ? "idle" : "disconnected")
+    lastPongRef.current = null
+    isInitiatorRef.current = false
+    if (connectTimeoutRef.current) { clearTimeout(connectTimeoutRef.current); connectTimeoutRef.current = null }
+    if (peerRef.current) { try { peerRef.current.destroy() } catch { } peerRef.current = null }
+  }
+
+  function attachPeerEvents(peer: any) {
+    peer.on("data", enqueueIncomingData)
+    peer.on("connect", () => {
+      if (connectTimeoutRef.current) { clearTimeout(connectTimeoutRef.current); connectTimeoutRef.current = null }
+      toast.success("Connected successfully.")
+      setConnectionState("connected")
+      startHeartbeat()
+    })
+    peer.on("close", () => {
+      const manual = manualDisconnectRef.current
+      manualDisconnectRef.current = false
+      if (manual) toast.info("Disconnected.")
+      else if (connectedRef.current) toast.info("Connection lost.")
+      resetPeer({ manual })
+    })
+    peer.on("error", () => {
+      toast.error("Connection failed. Make sure the other device is online and try again.")
+      resetPeer({ manual: false })
+    })
   }
 
   useEffect(() => {
-    if (!socket) return;
-    if (!socket.connected) socket.connect();
+    if (!socket) return
+    if (!socket.connected) socket.connect()
 
     const handleSignal = ({ fromPeerId, data }: any) => {
       if (isInitiatorRef.current && peerRef.current) {
-        peerRef.current.signal(data);
-        socket.emit("connection-established", { toPeerId: fromPeerId });
-        if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
-        return;
+        peerRef.current.signal(data)
+        if (connectTimeoutRef.current) { clearTimeout(connectTimeoutRef.current); connectTimeoutRef.current = null }
+        return
       }
       if (!peerRef.current) {
-        peerRef.current = new Peer({ initiator: false, trickle: false, config: iceConfig() });
-        peerRef.current.signal(data);
-        peerRef.current.on("signal", (answer: any) => socket.emit("signal", { toPeerId: fromPeerId, data: answer }));
-        peerRef.current.on("data", enqueueIncomingData);
-        peerRef.current.on("connect", () => {
-          setConnected(true);
-          startHeartbeat();
-        });
-        peerRef.current.on("close", () => {
-          if (manualDisconnectRef.current) {
-            toast.info("Device Disconnected");
-          }
-          manualDisconnectRef.current = false;
-          resetPeer();
-        });
-        peerRef.current.on("error", (err: any) => {
-          toast.info("Device Disconnected");
-          resetPeer();
-        });
+        setConnectionState("connecting")
+        setTargetId(fromPeerId)
+        peerRef.current = new Peer({ initiator: false, trickle: false, config: iceConfig() })
+        peerRef.current.signal(data)
+        peerRef.current.on("signal", (answer: any) => socket.emit("signal", { toPeerId: fromPeerId, data: answer }))
+        attachPeerEvents(peerRef.current)
       }
-    };
+    }
 
-    socket.on("signal", handleSignal);
-    socket.on("connection-established", ({ fromPeerId }: any) => {
-      clearReceiveState();
-      setIsConnectionEstablishedAtReceiver(true);
-      setTargetId(fromPeerId);
-    });
+    socket.on("signal", handleSignal)
     return () => {
-      socket.off("signal", handleSignal);
-      socket.off("connection-established");
-      stopHeartbeat();
-    };
-  }, [socket, enqueueIncomingData]);
+      socket.off("signal", handleSignal)
+      stopHeartbeat()
+    }
+  }, [socket, enqueueIncomingData])
 
   useEffect(() => {
-    connectedRef.current = connected;
-    if (connected) {
-      lastPongRef.current = Date.now()
-    }
-  }, [connected]);
+    connectedRef.current = connectionState === "connected"
+    if (connectedRef.current) lastPongRef.current = Date.now()
+  }, [connectionState])
 
   useEffect(() => {
-    if (!lastPongRef.current || !connected) {
-      return;
-    }
+    if (!lastPongRef.current || connectionState !== "connected") return
     const interval = setInterval(() => {
-      if (Date.now() - lastPongRef.current > 12000) {
-        toast.info("Connection lost");
-        resetPeer();
+      if (lastPongRef.current && Date.now() - lastPongRef.current > HEARTBEAT_TIMEOUT_MS) {
+        toast.info("Connection lost.")
+        resetPeer({ manual: false })
       }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [connected]);
+    }, HEARTBEAT_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [connectionState])
 
   useEffect(() => {
-    const shouldKeepAwake = connected || isSharing || receiveProgress > 0 || isReceiveFinalizing;
-    if (shouldKeepAwake) {
-      void requestWakeLock();
-      return;
+    if (connectionState === "connected" || isTransferring) {
+      void requestWakeLock(wakeLockRef)
+      return
     }
-    void releaseWakeLock();
-  }, [connected, isSharing, receiveProgress, isReceiveFinalizing]);
+    void releaseWakeLock(wakeLockRef)
+  }, [connectionState, isTransferring])
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      if (connectedRef.current || isSharing || receiveProgress > 0 || isReceiveFinalizing) {
-        void requestWakeLock();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+      if (document.visibilityState !== "visible") return
+      if (connectedRef.current || isTransferring) void requestWakeLock(wakeLockRef)
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange)
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      void releaseWakeLock();
-    };
-  }, [isSharing, receiveProgress, isReceiveFinalizing]);
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+      void releaseWakeLock(wakeLockRef)
+    }
+  }, [isTransferring])
 
-  function signaling() {
-    clearReceiveState();
-    setConnecting(true);
-    isInitiatorRef.current = true;
-    stopHeartbeat();
-    peerRef.current = new Peer({ initiator: true, trickle: false, config: iceConfig() });
-    peerRef.current.on("signal", (offer: any) => socket.emit("signal", { toPeerId: targetId, data: offer }));
-    peerRef.current.on("data", enqueueIncomingData);
-    peerRef.current.on("connect", () => {
-      if (connectTimeoutRef.current) {
-        clearTimeout(connectTimeoutRef.current);
-        connectTimeoutRef.current = null;
-      }
-      toast.success("Connected Successfully");
-      setConnected(true);
-      setConnecting(false);
-      startHeartbeat();
-    });
-    peerRef.current.on("close", () => {
-      if (manualDisconnectRef.current) {
-        toast.info("Device Disconnected");
-      }
-      manualDisconnectRef.current = false;
-      resetPeer();
-    });
-    peerRef.current.on("error", (err: any) => {
-      toast.info("Device Disconnected");
-      resetPeer();
-    });
+  function signaling(isReconnect: boolean) {
+    const sanitizedTarget = targetId.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
+    if (sanitizedTarget.length < 8) { toast.error("Enter the full device code first."); return }
+    if (sanitizedTarget === peerId) { toast.error("You can't connect to your own device code."); return }
+    if (!socket?.connected) { toast.error("Not connected to the signaling server. Check your connection and try again."); return }
+
+    clearReceiveState()
+    setConnectionState(isReconnect ? "reconnecting" : "connecting")
+    isInitiatorRef.current = true
+    stopHeartbeat()
+    peerRef.current = new Peer({ initiator: true, trickle: false, config: iceConfig() })
+    peerRef.current.on("signal", (offer: any) => socket.emit("signal", { toPeerId: sanitizedTarget, data: offer }))
+    attachPeerEvents(peerRef.current)
     connectTimeoutRef.current = setTimeout(() => {
-      if (!connectedRef.current) { toast.error("Connection timed out. Make sure the other device is online."); resetPeer(); }
-    }, CONNECT_TIMEOUT_MS);
+      if (!connectedRef.current) {
+        toast.error("Connection timed out. Double-check the code and make sure the other device is online.")
+        resetPeer({ manual: false })
+      }
+    }, CONNECT_TIMEOUT_MS)
+    setTargetId(sanitizedTarget)
   }
 
-  async function sendFiles(files: File[]) {
-    const peer = peerRef.current;
-    if (!peer?.connected) { toast.error("Not connected."); return; }
-    setIsSharing(true); setIsShared(false); setProgress(0); sendAbortRef.current = false;
-    void requestWakeLock();
-    const channel: RTCDataChannel = peer._channel;
+  function queueFiles(pickedFiles: File[]) {
+    const peer = peerRef.current
+    if (!peer?.connected) { toast.error("Not connected. Connect to a device first."); return }
+    for (const file of pickedFiles) {
+      const id = generateId()
+      upsertFile({ id, name: sanitizeFileName(file.name), size: file.size, mimeType: file.type || "application/octet-stream", direction: "outgoing", status: "pending", progress: 0, createdAt: Date.now() })
+      sendQueueRef.current = sendQueueRef.current
+        .then(() => sendOneFile(id, file))
+        .catch((err) => {
+          console.error(err)
+          upsertFile({ id, status: "failed", error: "Transfer failed" })
+        })
+    }
+  }
+
+  async function sendOneFile(id: string, file: File) {
+    if (cancelledRef.current.has(id)) {
+      cancelledRef.current.delete(id)
+      upsertFile({ id, status: "cancelled" })
+      return
+    }
+    const peer = peerRef.current
+    if (!peer?.connected) { upsertFile({ id, status: "failed", error: "Disconnected before transfer started" }); return }
+    const channel: RTCDataChannel = peer._channel
 
     function waitForDrain(): Promise<void> {
       return new Promise((resolve) => {
-        if (channel.bufferedAmount <= RESUME_BUFFER_BYTES) { resolve(); return; }
-        channel.bufferedAmountLowThreshold = RESUME_BUFFER_BYTES;
-        const handler = () => { channel.removeEventListener("bufferedamountlow", handler); resolve(); };
-        channel.addEventListener("bufferedamountlow", handler);
-      });
+        if (channel.bufferedAmount <= RESUME_BUFFER_BYTES) { resolve(); return }
+        channel.bufferedAmountLowThreshold = RESUME_BUFFER_BYTES
+        const handler = () => { channel.removeEventListener("bufferedamountlow", handler); resolve() }
+        channel.addEventListener("bufferedamountlow", handler)
+      })
     }
 
+    upsertFile({ id, status: "transferring", progress: 0 })
     try {
-      const totalBytes = files.reduce((s, f) => s + f.size, 0);
-      let sentBytes = 0;
-      peer.send(JSON.stringify({ type: "batch-meta", totalBytes, fileCount: files.length } satisfies BatchMeta));
-
-      for (let idx = 0; idx < files.length; idx++) {
-        if (sendAbortRef.current) break;
-        const file = files[idx];
-        peer.send(JSON.stringify({ type: "meta", name: file.name, size: file.size, mimeType: file.type || "application/octet-stream", index: idx } satisfies FileMeta));
-
-        let offset = 0, checksum = 1;
-        while (offset < file.size) {
-          if (sendAbortRef.current) break;
-          if (channel.bufferedAmount > MAX_BUFFER_BYTES) await waitForDrain();
-          const slice = file.slice(offset, offset + CHUNK_SIZE);
-          const buf = await slice.arrayBuffer();
-          const u8 = new Uint8Array(buf);
-          checksum = adler32(u8, checksum);
-          peer.send(u8);
-          offset += u8.byteLength;
-          sentBytes += u8.byteLength;
-          setProgress(Math.floor((sentBytes / totalBytes) * 100));
+      peer.send(JSON.stringify({ type: "file-meta", id, name: file.name, size: file.size, mimeType: file.type || "application/octet-stream", createdAt: Date.now() } satisfies ControlMessage))
+      let offset = 0, checksum = 1, lastPct = -1
+      while (offset < file.size) {
+        if (cancelledRef.current.has(id)) {
+          cancelledRef.current.delete(id)
+          try { peer.send(JSON.stringify({ type: "file-cancel", id } satisfies ControlMessage)) } catch { }
+          upsertFile({ id, status: "cancelled" })
+          return
         }
-        peer.send(JSON.stringify({ type: "end", index: idx, checksum } satisfies EndMsg));
+        if (!peer.connected) throw new Error("Connection lost mid-transfer")
+        if (channel.bufferedAmount > MAX_BUFFER_BYTES) await waitForDrain()
+        const slice = file.slice(offset, offset + CHUNK_SIZE)
+        const buf = await slice.arrayBuffer()
+        const u8 = new Uint8Array(buf)
+        checksum = adler32(u8, checksum)
+        peer.send(u8)
+        offset += u8.byteLength
+        const pct = Math.min(Math.floor((offset / file.size) * 100), 99)
+        if (pct !== lastPct) { lastPct = pct; upsertFile({ id, progress: pct }) }
       }
-
-      if (!sendAbortRef.current) { toast.success("Files shared successfully 🫡"); setIsShared(true); }
+      peer.send(JSON.stringify({ type: "file-end", id, checksum } satisfies ControlMessage))
+      upsertFile({ id, status: "completed", progress: 100 })
     } catch (err) {
-      console.error(err);
-      toast.error("Transfer failed. Please try again.");
-    } finally {
-      setIsSharing(false);
-      if (receiveProgress === 0 && !currentReceiveRef.current) {
-        void releaseWakeLock();
-      }
+      console.error(err)
+      upsertFile({ id, status: "failed", error: "Transfer interrupted" })
     }
   }
 
-  function download() {
-    const files = receivedFilesRef.current;
-    if (!files.length) { toast.error("No files to download."); return; }
-    for (const f of files) {
-      if (!f.url) continue;
-      const a = document.createElement("a");
-      a.href = f.url; a.download = f.name; a.click();
-    }
-    toast.success("Download started.");
+  function cancelOutgoingFile(id: string) {
+    cancelledRef.current.add(id)
   }
 
   function CopyToClipboard(mouseLeave: boolean) {
-    if (mouseLeave) setTimeout(() => setIsCopiedToClipboard(false), 500);
-    else setIsCopiedToClipboard(true);
+    if (mouseLeave) setTimeout(() => setIsCopied(false), 500)
+    else setIsCopied(true)
+  }
+
+  async function copyPeerId() {
+    if (!peerId) return
+    try {
+      await navigator.clipboard.writeText(peerId)
+      CopyToClipboard(false)
+    } catch {
+      toast.error("Couldn't copy the code. Select and copy it manually.")
+    }
   }
 
   function disconnect() {
-    const peer = peerRef.current;
-    manualDisconnectRef.current = true;
-    if (!peer) {
-      resetPeer();
-      return;
-    }
-    try {
-      if (peer.connected) {
-        peer.send(JSON.stringify({ type: "disconnect" }));
-      }
-    } catch (e) {
-      console.error('e', e);
-    }
-    resetPeer();
+    manualDisconnectRef.current = true
+    resetPeer({ manual: true })
   }
+
+  function handleClearIncoming() {
+    const count = files.filter((f) => f.direction === "incoming" && f.status === "completed").length
+    if (count === 0) return
+    const confirmed = window.confirm(
+      `Remove ${count} received file${count > 1 ? "s" : ""} from this device? This only affects this device — the sender still has their copy.`
+    )
+    if (!confirmed) return
+    void clearAllIncoming()
+    toast.success("Cleared shared files from this device.")
+  }
+
+  const showConnectForm = connectionState === "idle" || connectionState === "disconnected"
+  const showFileList = connectionState !== "idle" || files.length > 0
 
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-slate-950 transition-colors text-slate-900 dark:text-white">
@@ -535,64 +487,96 @@ export default function SharingPage() {
       <section className="py-16">
         <div className="mx-auto w-full max-w-6xl px-6 grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-14 items-start">
           <div className="w-full space-y-6">
-            <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 shadow-md">
-              <p className="text-sm text-gray-500 mb-2">Your device code</p>
+            <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 shadow-md space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-500">Your device code</p>
+                <ConnectionBadge state={connectionState} />
+              </div>
+
               <div className="text-center py-6 bg-gray-100 dark:bg-slate-800 rounded-xl overflow-hidden">
                 {peerId ? (
-                  <span className="break-all">
-                    <ShowTooltipInContent mainContent={peerId}
-                      toolTipContent={isCopiedToClipboard ? "Copied!" : "Click to copy"}
-                      className="text-sm sm:text-2xl font-semibold tracking-widest"
-                      useButton={false}
-                      setCopyToClipboard={() => CopyToClipboard(false)}
-                      onMouseLeave={() => CopyToClipboard(true)} />
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={copyPeerId}
+                        onMouseLeave={() => CopyToClipboard(true)}
+                        aria-label="Copy your device code"
+                        className="break-all text-sm sm:text-2xl font-semibold tracking-widest font-mono"
+                      >
+                        {peerId}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{isCopied ? "Copied!" : "Click to copy"}</TooltipContent>
+                  </Tooltip>
                 ) : (
-                  <span className="text-sm text-gray-500">Generating Device Code…</span>
+                  <span className="text-sm text-gray-500">Generating device code…</span>
                 )}
               </div>
-              {connected && (
-                <>
-                  <p className="text-sm text-gray-500 mb-2 mt-4">Connected with device</p>
-                  <div className="text-center py-6 bg-gray-100 dark:bg-slate-800 rounded-xl">{targetId}</div>
 
-                  <ShowTooltipInContent mainContent='Disconnect' toolTipContent='Tap To Disconnect'
-                    className={'w-full mt-5 rounded-xl py-3 text-center font-medium transition bg-slate-900 text-white dark:bg-white dark:text-black'}
-                    useButton={false} onClick={disconnect} />
+              {connectionState === "connected" && (
+                <>
+                  <p className="text-sm text-gray-500 mt-4">Connected with device</p>
+                  <div className="text-center py-6 bg-gray-100 dark:bg-slate-800 rounded-xl font-mono">{targetId}</div>
+                  <Button type="button" variant="outline" className="w-full" onClick={disconnect}>Disconnect</Button>
                 </>
+              )}
+
+              {connectionState === "disconnected" && (
+                <div className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 p-4 space-y-3">
+                  <p className="text-sm text-red-700 dark:text-red-300">
+                    Connection to {targetId || "the other device"} was lost. Files you already received are still safe below.
+                  </p>
+                  <Button type="button" className="w-full" onClick={() => signaling(true)}>Reconnect</Button>
+                </div>
+              )}
+
+              {(connectionState === "connecting" || connectionState === "reconnecting") && (
+                <p className="text-sm text-gray-500 text-center">
+                  {connectionState === "reconnecting" ? "Reconnecting" : "Connecting"} to {targetId || "device"}…
+                </p>
               )}
             </div>
 
-            {!connected && (
+            {showConnectForm && (
               <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 shadow-md space-y-4">
-                <p className="text-sm text-gray-500">Enter friend's code</p>
-                <input value={targetId} onChange={(e) => setTargetId(e.target.value.toUpperCase())}
+                <label htmlFor="target-code" className="block text-sm text-gray-500">
+                  Enter the other device&apos;s code
+                </label>
+                <input
+                  id="target-code"
+                  value={targetId}
+                  onChange={(e) => setTargetId(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
                   placeholder="Enter code to connect…"
-                  className="w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-slate-400" />
-                <ShowTooltipInContent
-                  mainContent={connecting ? "Connecting…" : "Connect"}
-                  toolTipContent={!targetId ? "Paste code to connect" : connecting ? "Connecting…" : "Tap to connect"}
-                  className="w-full rounded-xl py-3 text-center font-medium transition bg-slate-900 text-white dark:bg-white dark:text-black"
-                  useButton={false} disabled={connecting || targetId.length < 8} onClick={signaling} />
+                  maxLength={8}
+                  className="w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-slate-400"
+                />
+                <Button type="button" className="w-full" disabled={targetId.length < 8} onClick={() => signaling(false)}>
+                  Connect
+                </Button>
               </div>
             )}
           </div>
 
-          {connected && !isConnectionEstablishedAtReceiver ? (
-            <FileUpload onFiles={(files: any) => sendFiles(files)} isShared={isShared} isSharing={isSharing} progress={progress} />
-          ) : connected && isConnectionEstablishedAtReceiver ? (
-            // Pass isReceiveFinalizing so Attachements can show "Preparing file…" and keep button disabled
-            <Attachements
-              downloadAttachments={download}
-              receiveProgress={receiveProgress}
-              isReceiveFinalizing={isReceiveFinalizing}
-            />
-          ) : (
-            <DeviceOrbit />
-          )}
+          <div className="w-full space-y-6">
+            {connectionState === "connected" && <ShareDropzone onShare={queueFiles} />}
+
+            {showFileList && (
+              <FileList
+                files={files}
+                onDownload={downloadFile}
+                onDeleteIncoming={deleteIncomingFile}
+                onCancelOutgoing={cancelOutgoingFile}
+                onClearIncoming={handleClearIncoming}
+                hasClearableIncoming={hasClearableIncoming}
+              />
+            )}
+
+            {!showFileList && connectionState === "idle" && <DeviceOrbit />}
+          </div>
         </div>
       </section>
       <Footer />
     </main>
-  );
+  )
 }

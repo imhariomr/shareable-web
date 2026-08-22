@@ -1,8 +1,14 @@
-"use client"
-
+import type { Metadata } from "next"
 import Navbar from "@/components/ui/navbar"
 import Footer from "@/components/ui/footer"
 import { Twitter } from "lucide-react"
+
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description:
+    "Sendvia transfers files directly between devices with no server-side storage. Read how we handle your data and privacy.",
+  alternates: { canonical: "https://sendvia.site/privacy" },
+}
 
 export default function PrivacyPage() {
   return (
