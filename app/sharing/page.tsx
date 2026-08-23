@@ -72,7 +72,11 @@ async function finalizeOPFSBlob(id: string, mimeType: string): Promise<Blob | nu
     const root = await (navigator.storage as any).getDirectory()
     const fh = await root.getFileHandle(id)
     const file = await fh.getFile()
-    const blob = new Blob([file], { type: mimeType })
+    // Read bytes into memory before removing the backing OPFS entry — getFile() can return
+    // a lazily-read reference on some browsers, so deleting the entry right away can leave
+    // large blobs (e.g. video) pointing at data that's already gone by the time it's read.
+    const buffer = await file.arrayBuffer()
+    const blob = new Blob([buffer], { type: mimeType })
     void root.removeEntry(id).catch(() => {})
     return blob
   } catch {
