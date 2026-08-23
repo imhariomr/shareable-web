@@ -376,7 +376,8 @@ export default function SharingPage() {
     const sanitizedTarget = targetId.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
     if (sanitizedTarget.length < 8) { toast.error("Enter the full device code first."); return }
     if (sanitizedTarget === peerId) { toast.error("You can't connect to your own device code."); return }
-    if (!socket?.connected) { toast.error("Not connected to the signaling server. Check your connection and try again."); return }
+    if (!socket) { toast.error("Not connected to the signaling server. Check your connection and try again."); return }
+    if (!socket.connected) socket.connect()
 
     clearReceiveState()
     setConnectionState(isReconnect ? "reconnecting" : "connecting")
